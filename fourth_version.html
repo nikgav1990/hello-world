@@ -1,0 +1,2226 @@
+<!DOCTYPE HTML>
+<html><!-------------------------ΑΡΧΗ ΤΕΤΑΡΤΗΣ ΕΚΔΟΣΗΣ--------------------------------->
+<head>
+    <meta charset="utf-8"/>
+    <title>Project</title>
+<script src="webgl-debug.js"></script>
+<script src="gl-matrix-min.js"></script>
+<script id="vShader" type="x-shader/x-vertex">
+
+//GLSL (GL Shader Language) 
+   
+        attribute vec4 VertexPosition; // attribute: παράμετρος εισόδου του shader
+        attribute vec2 textCoord;//attribute για την εικόνα της υφής  
+     
+	uniform mat4 uTransformMatrix;//uniform μετασχηματισμού της θέσης του αντικειμένου 
+	uniform mat4 uPerspectiveViewMatrix;//uniform που θα υποδεχθεί τον πίνακα μετασχηματισμού προοπτικής/κάμερας (Perspective/View)	
+        uniform mat4 TextureMatrix;
+	
+        varying vec2 vtextCoord;//μεταβλητή εξόδου του vertex shader για την υφή
+	
+	void main() {
+	//Η τελική θέση θα προκύψει από τον μετασχηματισμό της θέσης και της προοπτικής/κάμερας	
+        gl_Position = uPerspectiveViewMatrix * uTransformMatrix * VertexPosition; 
+		
+		vtextCoord = textCoord; //εκχώρηση συντεταγμένων στο νέο attribute της εικόνας 
+                
+	}//end-main 
+	
+</script>
+<script id="fShader" type="x-shader/x-fragment">
+    
+      
+       precision mediump float;
+          
+	varying vec2 vtextCoord;  
+      
+        uniform sampler2D usampler; 
+        
+	void main() {
+            
+                gl_FragColor = texture2D(usampler, vtextCoord);
+	}
+</script>
+
+<script>
+var gl; //Η μεταβλητή που μας δίνει πρόσβαση στο API
+var canvas; //Το αντικείμενο που θα χρησιμοποιηθεί για το webgl context
+var shaderProgram; //Το shader αντικείμενο
+//--------------------------------------------------------------------//
+var vertexPositionAttributePointer; // Η διεύθυνση του attribute VertexPosition
+var textCoordPointer;//Pointer που περιέχει την διεύθυνση του attribute του texture
+//--------------------------------------------------------------------//
+var buffer;//τo buffer αντικείμενο που περιέχει τις κορυφές που θα σχεδιαστούν
+var indexbuffer;//Το buffer που περιέχει τους δείκτες των κορυφών
+var texturebuffer;//Το buffer που περιέχει τις θέσεις της εικόνας που αντιστοιχούν στις κορυφές
+var skybuffer;//Το αντίστοιχο buffer κορυφών του skybox
+var skyIbuffer;//Το αντίστοιχο buffer δεικτών του skybox
+var floorbuffer;//Το buffer κορυφών του πατώματος
+var floorIbuffer;//Το  buffer δεικτών του πατώματος
+var floorTexturebuffer;//Το buffer υφής του πατώματος,διαφορετικό από το ενιαίο λόγω λιγότερων κορυφών
+//----------------------------------------------------------------//
+var transformUniformPointer;//Pointer στο uniform uTransformMatrix
+var perspectiveViewUniformPointer;//Pointer στο uniform uPerspectiveMatrix
+var samplerUniformPointer;//Pointer στο uniform δηλώσαμε για την υφή
+//----------------------------------------------------------------//
+var localCameraDistance;//Το πεδίο που θα πάρει την τιμή του πεδίου 'CameraDistance';
+var totalCameraView=0;//Αρχικοποιούμε την γωνία θέασης σε 90 μοίρες
+var localCameraView;//Το πεδίο που θα πάρει την τιμή του textbox 'CameraView'
+//----------------------------------------------------------------//
+var near=0.01;//Αρχικοποίηση κοντινού κατωφλίου ορατότητας στο 0.01
+var far=10000;//Αρχικοποίηση μακρινού κατωφλίου ορατότητας ΠΛΕΟΝ στο 10000
+//-------------------------------------------------------------------------//
+var requestId=0;//flag μεταβλητή για την εκκίνηση και παύση του animation
+var Angle=0;//Η συνολική γωνία περιστροφής της κάμερας σε ακτίνια,αρχικοποιημένη σε μηδέν(0)
+var totalz=2;//Το συνολικό ύψος για την περιστροφή της κάμερας αρχικοποιημένο σε δύο(2)
+//-------------------------------------------------------------------------//
+var bodyTexture;//Μεταβλητή για την υφή του σώματος
+var faceTexture;//Μεταβλητή για την υφή του προσώπου
+var skyTexture;//Μεταβλητή για την εικόνα της σκηνής
+var floorTexture;//Μεταβλητή υφής για την εικόνα του πατώματος
+//------------------------------------------------------------------------//
+var mouseDown = false; // flag ότι κουμπί του ποντικιού είναι πατημένο
+var deltaFresh = false; // όταν κρατάμε πατημένο το κουμπί στο animation, το deltaX, deltaY χρησιμοποιούνται επανειλημένα
+						// αυτό το flag θα το εμποδίζει αυτό
+var lastMouseX = null; // Τελευταία καταγεγεραμμένη θέση ποντικιού στον καμβά στους άξονες x,y
+var lastMouseY = null; 
+var currMouseX = null; // Τρέχουσα θέση ποντικιού στον καμβά στον άξονα x,y αντίστοιχα
+var currMouseY = null;
+var deltaMouseX = 0; // Διαφορά τρέχουσας - τελευταίας καταγεγραμμένης θέσης στον άξονα x,y αντίστοιχα
+var deltaMouseY = 0;
+
+var rect; // Αντικείμενο για το ορθογώνιο που περιέχει τον καμβά
+var localAngle=0;//Η γωνία περιστροφής των μελών του σώματος αρχικοποιημένη σε μηδέν
+//------------------------------------------------------------------------//
+var handsAngle=0; //Η αρχική γωνία περιστροφής των χεριών στις τρεις animated επιλογές
+var bendAngle= 0;//Η αρχική γωνία επίκυψης του ρομπότ στις επιλογές "On/Off" και "Γυμναστική"
+var moveDown = false;//Το flag για να κατεβαίνουν τα χέρια μετά την ταυτόχρονη οριζοντίωση τους γύρω από τον άξονα Χ στις επιλογές "On/Off" και "Γυμναστική"
+var moveUp=true;//To flag που εκκινεί την μετακίνηση των μελών του σώματος κατά την επιλογή "System-Failure" και "On/Off"
+var bendDown = false;//Το flag επίκυψης του σώματος στην επιλογή "Γυμναστική"
+var startHand= true; //to flag εκκίνησης περιστροφής των χεριών ώστε να συγχρονίζονται και με το σώμα συνολικά
+var stopHand = false;//To flag για εκκίνηση περιστροφής αριστερού χεριού στην επιλογή "System Failure"
+var moveLegF = true;//To flag για εκκίνηση μετακίνηση των ποδιών μπροστά στην επιλογή "System Failure" 
+var moveLegB = false;//To flag για εκκίνηση μετακίνηση των ποδιών πίσω στην επιλογή "System Failure"
+var fall=true;
+var getUp=false;
+var hh=0.1;//Το αρχικό ύψος μετακίνησης του κεφαλιού στην επιλογή "System Failure"
+var len=0.1;//Το αρχικό μήκος μετακίνησης των ποδιών
+var move=true;
+
+
+//Δημιουργία context
+function createGLContext(canvas) {
+	var context = null;
+
+	context = canvas.getContext("webgl");  
+	if (!context)
+		context = canvas.getContext("experimental-webgl"); 
+	if (context) {
+		context.viewportWidth = canvas.width; 
+		context.viewportHeight = canvas.height; 
+	} 
+	else {
+		alert("Failed to create WebGL context!");
+	}
+	return context;
+}//end-context
+
+//Φόρτωση του shader του προγράμματος και κατάλληλο μήνυμα αν απέτυχε
+function loadShader(type, shaderSource) {
+	var shader = gl.createShader(type); 
+	gl.shaderSource(shader, shaderSource); 
+	gl.compileShader(shader); 
+
+	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { 
+		alert("Error compiling shader" + gl.getShaderInfoLog(shader)); 
+		gl.deleteShader(shader);  
+		return null;
+	}
+	return shader;  
+}
+//Αρχικοποίση των vertex και fragment shader
+function setupShaders() {
+    
+	var vertexShaderSource = document.getElementById("vShader").textContent; 
+	
+	var fragmentShaderSource = document.getElementById("fShader").textContent; 
+	
+	var vertexShader = loadShader(gl.VERTEX_SHADER, vertexShaderSource); 
+	var fragmentShader = loadShader(gl.FRAGMENT_SHADER, fragmentShaderSource); 
+
+//Create shader program and attach the shaders
+	shaderProgram = gl.createProgram(); 
+	gl.attachShader(shaderProgram, vertexShader); 
+	gl.attachShader(shaderProgram, fragmentShader); 
+	gl.linkProgram(shaderProgram); //Σύνδεση των shader 
+
+	if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+		alert("Failed to setup shaders");//Αν απέτυχε η σύνδεση εμφάνισε κατάλληλο μήνυμα
+	}
+
+	gl.useProgram(shaderProgram);//Χρήση του προγράμματος που μόλισ δημιουργήθηκε 
+       
+        //Αποθήκευση διεύθυνσης attribute του shader το οποίο είναι το avertexposition
+	vertexPositionAttributePointer = gl.getAttribLocation(shaderProgram, "VertexPosition"); 
+        
+        //Ενεργοποίηση του attribute που μόλις πήρε τιμή
+	gl.enableVertexAttribArray(vertexPositionAttributePointer); 
+	
+ 
+        //Η μεταβλητή για την διεύθυνση του πεδίου του shader με όνομα textCoord;
+	textCoordPointer = gl.getAttribLocation(shaderProgram, "textCoord");
+	gl.enableVertexAttribArray(textCoordPointer);
+        
+        TextureUniformPointer= gl.getAttribLocation(shaderProgram, "TextureMatrix");
+        
+        //Παίρνουμε την διεύθυνση του uniform που έχει σαν όνομα uTransformMatrix
+	transformUniformPointer = gl.getUniformLocation(shaderProgram, "uTransformMatrix");
+        
+        //Αντίστοιχα και για το uniform για την προοπτική/θέση της κάμερας
+	perspectiveViewUniformPointer = gl.getUniformLocation(shaderProgram, "uPerspectiveViewMatrix");
+        
+        samplerUniformPointer = gl.getUniformLocation(shaderProgram, "usampler");
+        
+}//end-SetupShaders
+
+
+function setupBuffers() {
+    
+    //------------------------ΑΡΧΗ BUFFER ΚΟΡΥΦΩΝ----------------------------------------//
+    //Αρχικοποίηση των buffer που περιέχουν τις κορυφές τα χρώματα και τους δείκτες των κορυφών
+	buffer = gl.createBuffer();//Δημιουργία buffer 
+	gl.bindBuffer(gl.ARRAY_BUFFER,buffer); //Δέσμευση buffer για να δεχθεί δεδομένα vertex
+        
+	//Οκτώ κορυφές του κύβου
+        var cubeVertices = [
+							0.5, 0.5, 0.5, 1.0,
+							-0.5, 0.5, 0.5, 1.0,
+							-0.5, -0.5, 0.5, 1.0,
+							0.5, -0.5, 0.5, 1.0,
+                                                        
+                                                        0.5, 0.5, -0.5, 1.0,
+							-0.5, 0.5, -0.5, 1.0,
+							-0.5, -0.5, -0.5, 1.0,
+							0.5, -0.5, -0.5, 1.0
+							];
+                                                        
+	//Πέρασμα τιμών στο buffer που δεσμεύθηκε
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(cubeVertices),	gl.STATIC_DRAW);
+         buffer.itemSize = 4; //Αριθμός που εκφράζει ανά πόσες τιμές αφορούν μια κορυφή
+	 buffer.numberOfItems = 8; //Αριθμός κορυφών συνολικά
+         
+//--------------------------ΤΕΛΟΣ BUFFER ΚΟΡΥΦΩΝ--------------------------------------------//
+
+        
+//--------------------------ΑΡΧΗ BUFFER ΔΕΙΚΤΩΝ-------------------------------------//
+
+	indexbuffer = gl.createBuffer(); 
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexbuffer); 
+        
+        //ΔΗΜΙΟΥΡΓΟΥΜΕ ΔΙΑΔΟΧΙΚΑ ΤΡΙΓΩΝΑ ΧΡΗΣΙΜΟΠΟΙΩΝΤΑΣ ΤΟΥΣ ΔΕΙΚΤΕΣ ΤΩΝ ΚΟΡΥΦΩΝ(0-7) ΑΝΤΙΣΤΟΙΧΑ
+	var index = [
+							0,1,2, 
+                                                        0,2,3, 
+                                                        4,5,6,
+                                                        4,6,7,
+                                                        0,4,7,
+                                                        0,7,3,
+                                                        0,1,5,
+                                                        0,5,4,
+                                                        1,5,6,
+                                                        1,6,2,
+                                                        7,6,2,
+                                                        7,2,3
+                                                        
+                                                        ];
+                                                        
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(index),gl.STATIC_DRAW);   
+	indexbuffer.itemSize=1; 
+	indexbuffer.numberOfItems =36;  
+
+//-----------------------ΤΕΛΟΣ BUFFER ΔΕΙΚΤΩΝ---------------------------------------//
+
+
+//-----------------------ΑΡΧΗ BUFFERS ΥΦΗΣ----------------------------------//
+
+        texturebuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, texturebuffer);
+        
+	var textureCoordinates= [               1.0,1.0,
+						0.0,1.0,
+						0.0,0.0,
+						1.0,0.0,
+                                                
+                                                1.0,1.0,
+						0.0,1.0,
+						0.0,0.0,
+						1.0,0.0
+                                 ];
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureCoordinates),gl.STATIC_DRAW);  
+	texturebuffer.itemSize = 2;
+	texturebuffer.numberOfItems = 8;
+        
+    //-----------------------BUFFER ΥΦΗΣ ΠΑΤΩΜΑΤΟΣ----------------------------//    
+           floorTexturebuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, floorTexturebuffer);
+        
+	var floortextureCoordinates= [          1.0,1.0,
+						0.0,1.0,
+						0.0,0.0,
+						1.0,0.0,
+                                                
+                                                1.0,0.0,
+						0.0,0.0,
+						0.0,0.0,
+						1.0,0.0
+                                        ];
+                                              
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floortextureCoordinates),gl.STATIC_DRAW);  
+	floorTexturebuffer.itemSize = 2;
+	floorTexturebuffer.numberOfItems = 8;
+        
+ //-----------------------ΤΕΛΟΣ BUFFERS ΥΦΗΣ----------------------------------//
+ 
+ //---------------ΑΡΧΙΚΟΠΟΙΗΣΗ ΑΝΤΙΚΕΙΜΕΝΩΝ ΥΦΗΣ----------------------//
+ 
+ bodyTexture= gl.createTexture();//Δημιουργία αντικειμένου υφής για το σώμα του ρομπότ
+ var bodyImg = "metal_tex.jpg"; //Η τοποθεσία της εικόνας
+ 
+ gl.bindTexture(gl.TEXTURE_2D,bodyTexture);//Δεύσμευση του buffer σώματος
+ //
+ //Δημιουργία ενός pixel ιδίου χρώματος με την υφή μέχρι να φορτωθεί η εικόνα της υφής
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+              new Uint8Array([170,170,170,255])); // γκρι χρώμα
+              
+   loadImageForTexture(bodyImg, bodyTexture);//Κλήση συνάρτησης για φόρτωση της εικόνας στην υφή
+
+        //----------------ΠΑΡΟΜΟΙΑ ΓΙΑ ΤΟ ΠΡΟΣΩΠΟ ΤΟΥ ΡΟΜΠΟΤ--------------------//
+        
+ faceTexture= gl.createTexture();//Δημιουργία αντικειμένου υφής για το πρόσωπο του ρομπότ
+ var faceImg = "darkface.jpg";//Η τοποθεσία της εικόνας προσώπου
+ 
+ gl.bindTexture(gl.TEXTURE_2D,faceTexture);//Δεύσμευση του buffer για το πρόσωπο
+ 
+ //Δημιουργία ενός pixel ιδίου χρώματος με την υφή μέχρι να φορτωθεί η εικόνα της υφής
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+              new Uint8Array([170,170,170,255])); // γκρι χρώμα
+
+ loadImageForFace(faceImg, faceTexture);//Κλήση συνάρτησης για φόρτωση της εικόνας στην υφή
+ 
+ 
+ //----------------ΜΕ ΑΝΑΛΟΓΟ ΤΡΟΠΟ ΚΑI ΓΙΑ ΤΟ SKYBOX--------------------//
+ 
+ skyTexture= gl.createTexture();//Δημιουργία αντικειμένου υφής για το πρόσωπο του ρομπότ
+ var skyImg = "sky.jpg";//Η τοποθεσία της εικόνας προσώπου
+ 
+ gl.bindTexture(gl.TEXTURE_2D,skyTexture);//Δεύσμευση του buffer για το πρόσωπο
+ 
+ //Δημιουργία ενός pixel ιδίου χρώματος με την υφή μέχρι να φορτωθεί η εικόνα της υφής
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+              new Uint8Array([135,206,250,255])); // γαλάζιο χρώμα
+
+ loadImageForTexture(skyImg, skyTexture);//Κλήση συνάρτησης για φόρτωση της εικόνας στην υφή
+ 
+ //------------------ΑΝΤΙΣΤΟΙΧΑ ΚΑΙ ΓΙΑ ΤΟ ΠΑΤΩΜΑ--------------------------//
+ 
+  floorTexture= gl.createTexture();//Δημιουργία αντικειμένου υφής για το πρόσωπο του ρομπότ
+ var floorImg = "floor_2.jpg";//Η τοποθεσία της εικόνας προσώπου
+ 
+ gl.bindTexture(gl.TEXTURE_2D,floorTexture);//Δεύσμευση του buffer για το πρόσωπο
+ 
+ //Δημιουργία ενός pixel ιδίου χρώματος με την υφή μέχρι να φορτωθεί η εικόνα της υφής
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+              new Uint8Array([135,206,250,255])); // γαλάζιο χρώμα
+
+ loadImageForTexture(floorImg, floorTexture);//Κλήση συνάρτησης για φόρτωση της εικόνας στην υφή
+ 
+//----------------------ΤΕΛΟΣ ΑΡΧΙΚΟΠΟΗΣΗΣ ΑΝΤΙΚΕΙΜΕΝΩΝ ΥΦΗΣ-----------------------------------//
+ 
+ 
+ }//---------------------------end-setupBuffers
+ 
+  //Συνάρτηση για σύνδεση αντικειμένου texture με την κάθε εικόνα και προεπεξεργασία εικόνας 
+function loadImageForTexture(url, textureObject) {
+// Δημιουργία νέου αντικειμένου εικόνας
+	var image = new Image();
+        
+//Κατά την φόρτωση της εικόνας θα καλείται η παρακάτω συνάρτηση
+	image.onload = function() {    
+		//Η τρέχουσα υφή θα είναι η παράμετρος
+		gl.bindTexture(gl.TEXTURE_2D, textureObject);
+               //Σειρά εικόνας υφής από πάνω προς τα κάτω
+	         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                 //Αντιγραφή εικόνας στην υφή
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+                //Καθορισμός νέων pixels αν χρειαστεί 
+               gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		//Καθορισμός συμπίεσης των εικονοστοιχείων
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		//Δημιουργία διαφορετικών εκδοχών της εικόνας μικρότερης ανάλυσης αν χρειαστεί
+                gl.generateMipmap(gl.TEXTURE_2D);
+                
+               };
+       
+	image.src = url;//Φόρτωση εικόνας
+        
+}//end-loadImage
+
+//--------------------------------------------------------------------------------------------------//
+
+  //Ομοίως για το πρόσωπο χωρίς να χρησιμοποιούμε την σειρά από πανω προς τα κάτω ούτε το mipmaping
+function loadImageForFace(url, textureObject) {
+// Δημιουργία νέου αντικειμένου εικόνας
+	var image = new Image();
+        
+//Κατά την φόρτωση της εικόνας θα καλείται η παρακάτω συνάρτηση
+	image.onload = function() {    
+		//Η τρέχουσα υφή θα είναι η παράμετρος
+		gl.bindTexture(gl.TEXTURE_2D, textureObject);
+                
+              //Αντιγραφή εικόνας στην υφή
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+                //Καθορισμός νέων pixels αν χρειαστεί 
+               gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		//Καθορισμός συμπίεσης των εικονοστοιχείων
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		//Δημιουργία διαφορετικών εκδοχών της εικόνας μικρότερης ανάλυσης αν χρειαστεί
+                gl.generateMipmap(gl.TEXTURE_2D);
+                
+               };
+       
+	image.src = url;//Φόρτωση εικόνας
+        
+}//end-loadImage------------------------------------------------------------------------------------//
+
+//-------Η ΣΥΝΑΡΤΗΣΗ draw ΚΑΤΑΡΓΗΘΗΚΕ
+
+//------------------ΧΡΗΣΙΜΟΠΟΙΕΤΑΙ ΠΛΕΟΝ ΜΟΝΟ Η REDRAW------------------------------//
+
+function redraw() {
+    
+        //Η τιμή που παίρνουμε από το text-box για την γωνία θέασης
+	  localCameraView = parseFloat(document.getElementById("cameraView").value);
+         
+      //Η ακτίνα περιστροφής της κάμερας από το ρομπότ είναι η απόσταση που εισάγει ο χρήστης
+          var r = parseFloat(document.getElementById("cameraDistance").value);
+          
+         totalCameraView = localCameraView*Math.PI/180.0;//Η γωνία θέασης ορίζεται από τον χρήστη ενώ αρχικά είναι 90 μοίρες
+	
+	// Αποφυγή υπερχείλισης για το cameraView αν είναι πάνω από 360 μοίρες
+        if (totalCameraView >= 2*Math.PI) //Αν είναι πάνω απο 360 μοίρες
+		totalCameraView = totalCameraView - 2*Math.PI;//Αφαίρεση από τις 360 για να πάρει τιμή <=360 μοίρες
+            
+       else if (totalCameraView < 0)//Αν εισαχθεί αρνητική την προσθέτουμε στις 360 ώστε να  είναι μικρότερη και πάλι
+		totalCameraView = totalCameraView + 2*Math.PI;  
+      
+   
+   //Αν το ποντίκι είναι πατημένο τότε αν τα deltaX,deltaY είναι μηδέν τότε η κίνηση αριστερά/δεξιά του ποντικιού
+   //προστίθεται στην συνολική γωνία περιστροφή της κάμερας καθώς και η κίνηση πάνω κάτω του ποντικιού προστίθεται
+   //και αυτή στο συνολικό ύψος της κάμερας διαρούμενη δια πέντε για μεγαλύτερη τιμή στο βήμα ύψους και σαν αποτέλεσμα
+   //να "ανεβαίνει" πιο γρήγορα το ρομπότ
+        if (mouseDown){
+            if(deltaFresh){
+           Angle+= deltaMouseX*Math.PI/180.0;
+               totalz+= (deltaMouseY/5);
+           }
+           
+       }//end-mouseDown
+       
+   if(document.getElementById("Gym").checked===true ||
+      document.getElementById("System_Failure").checked===true ||
+      document.getElementById("On-Off").checked===true) { move=false; }
+    
+        //ΘΕΛΟΥΜΕ ΤΑ ΒΗΜΑΤΑ ΜΕΤΑΒΟΛΗΣ ΥΨΟΥΣ ΚΑΜΕΡΑΣ ΚΑΙ ΓΩΝΙΑΣ ΠΕΡΙΣΤΡΟΦΗΣ ΤΗΣ ΝΑ ΛΑΜΒΑΝΟΝΤΑΙ ΥΠΟΨΗΝ ΜΟΝΟ
+        //ΚΑΤΑ ΤΟ ΑΝΙΜΑΤΙΟΝ ΑΡΑ ΧΡΗΣΙΜΟΙΠΟΥΜΕ ΚΑΙ ΤΗΝ ΚΑΤΑΛΛΗΛΗ ΣΥΝΘΗΚΗ
+        
+        if(requestId) { 
+                  
+              var stepAngle=1.0;//Το βήμα γωνία περιστροφής της κάμερας έχει σταθερή τιμή 1.0
+              Angle += stepAngle*Math.PI/180.0;//Αύξηση γωνίας περιστροφής
+              
+             var stepCamera=0.1;//το βήμα για το ύψος της κάμερας έχει επίσης σταθερή τιμή σε 0.1
+             totalz += stepCamera;//Αύξηση ύψους κάμερας
+             
+             }//end-if-request-Id
+             
+             
+        
+    
+             var xc= Math.cos(Angle); //Ορίζονται εκ νέου τα x,y της κάμερας για την θέσης της
+             var yc= Math.sin(Angle);
+             
+             var viewMatrix= mat4.create();//Τελική θέση κάμερας υπολογίζοντας και την ακτίνα περιστροφής(πεδίο cameraDistance) 
+             mat4.lookAt(viewMatrix,[r*xc , r*yc, totalz],[0,0,0],[0,0,1]);
+              
+             var perspectiveMatrix= mat4.create();
+             mat4.perspective(perspectiveMatrix,totalCameraView,1,near,far);
+         
+              var pvMatrix =  mat4.create();
+             mat4.multiply(pvMatrix,perspectiveMatrix,viewMatrix);
+        
+             gl.uniformMatrix4fv(perspectiveViewUniformPointer, false, new Float32Array(pvMatrix));
+         
+	//------------------------ΤΕΛΟΣ ΑΛΛΑΓΩΝ ΤΗΣ REDRAW----------------------------------------//
+        
+      //---------------ΕΝΤΟΛΕΣ ΑΠΟ ΤΗΝ DRAW ΠΟΥ ΚΑΤΑΡΓΗΘΗΚΕ-------------------//
+      
+         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);//Καθάρισε την προηγούμενη εικόνα
+        
+	//Συσχέτιση των attributes με τους κατάλληλους buffers(κορυφών και δεικτών)
+	gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+	gl.vertexAttribPointer(vertexPositionAttributePointer, buffer.itemSize, gl.FLOAT, false, 0, 0);
+     
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexbuffer);
+        
+   //-----------------------ΤΕΛΟΣ ΕΝΤΟΛΩΝ DRAW---------------------------------//  
+   
+   //-----------------------ΕΡΓΑΣΙΕΣ ΥΦΗΣ ΓΙΑ ΤΟ ΣΩΜΑ ΤΟΥ ΡΟΜΠΟΤ------------------------------//
+        
+        gl.activeTexture(gl.TEXTURE0);//Ενεργοποίηση πρώτης διαθέσιμης μονάδας υφής
+        
+	
+	gl.bindTexture(gl.TEXTURE_2D, bodyTexture);//Σύνδεση μονάδας με την υφή που θέλουμε
+         
+	//Ενημέρωση μεταβλητής δείκτη στο uniform για την μονάδα που ενεργοποιήσαμε(την μηδενική δηλαδή)
+	gl.uniform1i(samplerUniformPointer, 0);
+
+	//Δεύσμευση του buffer της υφής	
+	gl.bindBuffer(gl.ARRAY_BUFFER, texturebuffer);
+	
+        //Ενημέρωση attribute για τις συντεταγμένες υφής
+	gl.vertexAttribPointer(textCoordPointer, texturebuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+    //---------------------------ΤΕΛΟΣ ΕΡΓΑΣΙΩΝ ΥΦΗΣ ΓΙΑ ΤΟ ΣΩΜΑ ΤΟΥ ΡΟΜΠΟΤ-------------------------------//
+        
+        
+     //--------------------------ΕΡΓΑΣΙΕΣ ΓΙΑ ΤΟΝ ΣΧΕΔΙΑΣΜΟ ΤΟΥ ΡΟΜΠΟΤ--------------------------------------//
+     //
+            //---------------------ΠΑΛΑΙΟΙ ΠΙΝΑΚΕΣ ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥ ΓΙΑ ΤΟΝ ΑΡΧΙΚΟ ΣΧΕΔΙΑΣΜΟ---------------//
+             var transm=mat4.create();//Πίνακας που περιέχει τον μετασχηματισμό για την κάθε θέση του κύβου 
+             var scalem=mat4.create();//Πίνακας που περιέχει την κλιμάκωση του κάθε σημείου του κύβου
+             var product=mat4.create();//Το τελικό γινόμενο αποθηκεύεται εδώ για την εφαρμογή
+           //--------------------------------------------------------------------------------------------//
+        
+          //---------------------ΝΕΟΙ ΠΙΝΑΚΕΣ ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥ ΓΙΑ ΤΟΝ ΠΕΡΙΣΤΡΟΦΗ ΜΕΛΩΝ ΤΟΥ ΣΩΜΑΤΟΣ---------------//
+       var rotMat=mat4.create();//Πίνακας που θα αποθηκεύσει τον μετασχηματισμό για την περιστροφή
+       
+       //Το νέο γινόμενο που περιέχει το γινόμενο της προσωρινής μετακίνησης και της περιστροφής του μέλους του σώματος
+       var Newproduct=mat4.create();
+       var Newtransm=mat4.create();//Ο πίνακας που περιέχει την προσωρινή μετακίνηση του μέλους που θέλουμε να περιστρέψουμε
+       var Oldtransm=mat4.create();//Ο πίνακας που επαναφέρει το μέλος του σώματος στην προηγούμενη θέση του
+       var footRot= mat4.create();//Ο πίνακας που περιέχει τον μετασχηματισμό για την περιστροφή της πατούσας
+      //--------------------------------------------------------------------------------------------//
+      
+      //------------------------NEOI ΠΙΝΑΚΕΣ ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥ ΓΙΑ ΤΙΣ ΤΡΕΙΣ ANIMATED ΕΠΙΛΟΓΕΣ-----------------//
+    var handsRotF= mat4.create();//ΠΙΝΑΚΑΣ ΠΟΥ ΘΑ ΥΠΟΔΕΧΘΕΙ ΤΗΝ ΠΕΡΙΣΤΡΟΦΗ ΓΙΑ ΟΛΑ ΤΑ ΜΕΛΗ ΤΟΥ ΣΩΜΑΤΟΣ--ΚΟΙΝΟ ΟΝΟΜΑ ΓΙΑ ΕΥΚΟΛΙΑ ΕΧΕΙ ΟΡΙΣΤΕΙ
+    var headRot= mat4.create();//Ο ΠΙΝΑΚΑΣ ΠΕΡΙΣΤΡΟΦΗΣ ΤΟΥ ΚΕΦΑΛΙΟΥ ΓΙΑ ΝΑ ΠΕΡΙΣΤΡΕΦΕΤΑΙ ΚΑΙ ΤΟ ΚΕΦΑΛΙ ΜΑΖΙ ΜΕ ΤΑ ΧΕΡΙΑ ΣΤΗΝ ΕΠΙΛΟΓΗ "ΓΥΜΝΑΣΤΙΚΗ"
+    //----------------------------------------------------------------------------------------------------//
+      
+   //--------------------------------ΑΡΧΗ ΕΡΓΑΣΙΩΝ ΣΧΕΔΙΑΣΜΟΥ ΚΑΙ ΜΕΤΑΣΧΗΜΑΤΙΣΜΩΝ ΤΟΥ ΡΟΜΠΟΤ--------------------------------------------------------------------//
+     
+    //---------------------------------------------LEFT FOOT-------------------------------------------------------------//
+    
+      scalem=mat4.fromScaling(scalem,[4,6,2]);
+      transm=mat4.fromTranslation(transm,[0.82,0,0.5]);
+      mat4.multiply(product,scalem,transm);
+      
+  //---------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΤΟΥ ΑΡΙΣΤΕΡΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ) ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ---------------//
+     
+      if(document.getElementById("Left-Leg").checked===true) {
+               
+            
+      //Περιορισμός της γωνίας περιστροφής για το αριστερό πόδι και πατούσα του ρομπότ
+               if(localAngle > Math.PI/4){
+          
+          localAngle = Math.PI/4;
+          
+         }
+         else if(localAngle < 0 ){
+             
+           localAngle = 0;
+         }
+         
+             //Αρχή μετασχηματισμών για την περιστροφή
+              Newtransm= mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+              mat4.rotate(rotMat,rotMat,localAngle,[1,0,0]);
+             
+              Oldtransm= mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+              footRot= mat4.fromXRotation(footRot,localAngle);
+              
+              //Πέρασμα γινομένων των μετασχηματισμών στους πίνακες
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,footRot);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(product,Newproduct,product);
+              
+              //Πέρασμα τελικού πίνακα μετασχηματισμού στο uniform για την τελική θέση
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+     
+         }//end-if-left-foot 
+        
+      //---------------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΑΡΙΣΤΕΡΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ)-------------------------//
+      
+         //ΣΤΗΝ ΕΠΙΛΟΓΗ SYSTEM_FAILURE ΧΡΗΣΙΜΟΠΟΙΟΥΜΕ ΤΗΝ ΕΞΗΣ ΛΟΓΙΚΗ:ΟΡΙΖΟΥΜΕ ΜΙΑ ΜΕΤΑΒΛΗΤΗ BOOLEAN ΑΡΧΗΣ
+         //ΚΑΙ ΑΥΞΑΝΟΥΜΕ ΣΤΑΔΙΑΚΑ ΤΗΝ ΓΩΝΙΑ ΠΕΡΙΣΤΡΟΦΗΣ Η ΤΗΝ ΑΠΟΣΤΑΣΗ ΑΝ ΠΡΟΚΕΙΤΑΙ ΓΙΑ ΜΕΤΑΚΙΝΗΣΗ, 
+         //ΤΩΝ ΜΕΛΩΝ ΤΟΥ ΣΩΜΑΤΟΣ ΜΕΧΡΙ ΝΑ ΦΤΑΣΕΙ ΣΕ ΜΙΑ ΤΙΜΗ ΠΟΥ ΕΧΟΥΜΕ ΟΡΙΣΕΙ.
+         //ΕΠΕΙΤΑ ΚΑΝΟΥΜΕ ΑΛΗΘΗ ΜΙΑ ΜΕΤΒΛΗΤΗ ΤΕΛΟΥΣ(stopHand,getUp,moveDown κλπ.) ΚΑΙ ΕΠΑΝΑΦΕΡΟΥΜΕ ΤΟ ΡΟΜΠΟΤ ΣΤΗΝ ΑΡΧΙΚΗ ΘΕΣΗ
+         //ΔΗΜΙΟΥΡΓΟΝΤΑΣ ΕΤΣΙ ΜΙΑ ANIMATED ΕΙΚΟΝΑ.ΣΤΟ ΤΕΛΟΣ ΕΠΑΝΑΦΕΡΟΥΜΕ ΠΑΛΙ ΤΗΝ ΜΕΤΑΒΛΗΤΗ ΑΡΧΗΣ ΚΑΙ ΚΑΝΟΥΜΕ ΨΕΥΔΗΣ ΤΗΝ ΜΕΤΑΒΛΗΤΗ ΤΕΛΟΥΣ.
+         //Η ΔΙΑΔΙΚΑΣΙΑ ΑΥΤΗ ΕΠΑΝΑΛΜΒΑΝΕΤΑΙ ΑΥΤΟΜΑΤΑ ΜΕ ΤΟ ΑΝΙΜΑΤΙΟΝ.----------------------------------------------------------------------//
+         //
+      //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE-ΑΡΙΣΤΕΡΗ ΠΑΤΟΥΣΑ--------------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+           
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+               
+        
+             if(moveLegF) {
+                       
+               len += 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+                
+            
+             if(len > 10) {
+                 
+                    moveLegF=false;
+                    moveLegB=true;  
+                }
+                
+            }//end-if-movelegf
+            
+                if(moveLegB) {
+                    
+               len -= 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+           }
+           
+           if(len<0){
+                    
+                      moveLegB=false;
+                      moveLegF=true;
+                      
+               }//end-if-len
+            
+                    
+                     mat4.multiply(product,Newtransm,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE-ΑΡΙΣΤΕΡΗ ΠΑΤΟΥΣΑ------------------------------------------//
+   // 
+      //------------------ΓΙΑ ΤΗΝ ΕΠΙΛΟΓΗ ON/OFF ΧΡΗΣΙΜΟΠΟΙΕΙΤΑΙ ΠΑΡΟΜΟΠΟΙΑ ΛΟΓΙΚΗ ΜΕ ΤΗΝ ΕΠΙΛΟΓΗ SYSTEM FAILURE.
+      //ΟΡΙΖΟΥΜΕ ΔΙΑΦΟΡΕΤΙΚΕΣ ΜΕΤΑΒΛΗΤΕΣ ΓΙΑ ΚΑΘΕ ΜΕΛΟΣ ΤΟΥ ΣΩΜΑΤΟΣ ΩΣΤΕ ΝΑ ΜΗΝ ΔΗΜΙΟΥΡΓΕΙΤΑΙ ΠΡΟΒΛΗΜΑ ΜΕ ΤΗΝ ΚΙΝΗΣΗ 
+      //ΤΟΥ ΚΑΘΕ ΜΕΛΟΥΣ ΤΟΥ ΣΩΜΑΤΟΣ.Η ΚΙΝΗΣΗ ΕΙΝΑΙ ΑΝΙΜΑΤΕD ΟΠΩΣ ΚΑΙ ΜΕ ΤΗΝ ΕΠΙΛΟΓΗ SYSTEM FAILURE.-----------------//
+   
+   
+      //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΑΡΙΣΤΕΡΗ ΠΑΤΟΥΣΑ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΑΡΙΣΤΕΡΗ ΠΑΤΟΥΣΑ---------------------------------------------//
+   
+         
+      gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product)); 
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+    //-------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ LEFT-FOOT----------------------------------------------//
+    
+    
+      //------------------------------------RIGHT FOOT--ΔΕΞΙΑ ΠΑΤΟΥΣΑ-----------------------------------------------//
+      scalem=mat4.fromScaling(scalem,[4,6,2]);
+      transm=mat4.fromTranslation(transm,[-0.73,0,0.5]);
+      mat4.multiply(product,scalem,transm);
+      
+      
+    //--------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΔΕΞΙΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ) ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ-------------//
+      if(document.getElementById("Right-Leg").checked===true) {
+               
+              
+           //Περιορισμός της γωνίας περιστροφής για το δεξί πόδι και πατούσα του ρομπότ-ΔΙΑΦΟΡΟΠΟΙΕΤΑΙ ΚΑΙ Ο ΠΕΡΙΟΡΙΣΜΟΣ
+               //ΑΦΟΥ ΔΙΑΦΟΡΟΠΟΙΕΙΤΑΙ ΚΑΙ Η ΓΩΝΙΑ ΠΕΡΙΣΤΡΟΦΗΣ
+               if(localAngle > Math.PI/6){
+          
+          localAngle = Math.PI/6;
+         }
+         else if(localAngle < 0 ){
+             
+           localAngle = 0;
+         }
+         
+             //Αρχή μετασχηματισμών για την περιστροφή της δεξιάς πατούσας
+             //Διαφοροποιείται ως προς την μετακίνηση και την περιστροφή σε σχέση με το δεξί πόδι για να έχουμε 
+             //αρμονικό αποτέλεσμα χωρίς παραμόρφωση
+              Newtransm= mat4.fromTranslation(Newtransm,[0,-0.55,11.4]);
+              mat4.rotate(rotMat,rotMat,localAngle,[1,0,0]);
+             
+              Oldtransm= mat4.fromTranslation(Oldtransm,[0,0.55,-11.4]);
+              footRot= mat4.fromXRotation(footRot,2*localAngle);
+              
+              
+        //Πέρασμα γινομένων των μετασχηματισμών στους πίνακες για εφαρμογή της μετακίνησης και περιστροφής
+        //και τέλος πέρασμα του τελικού μετασχηματισμού στον τελικό πίνακα product.
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,footRot);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(product,Newproduct,product);
+              
+               //Περνάμε τον πίνακα και στο uniform για την τελική θέση του μέλους του σώματος του ρομπότ
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+             
+            
+            }//end-if-right-foot
+            
+      //--------------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΔΕΞΙΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ)---------------------------------//
+      
+      
+   //--------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE--ΔΕΞΙΑ ΠΑΤΟΥΣΑ-------------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+           
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+               
+        
+             if(moveLegF) {
+                       
+               len += 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-len,0]);
+                
+            
+             if(len > 10) {
+                 
+                    moveLegF=false;
+                    moveLegB=true;  
+                }
+                
+            }//end-if-movelegf
+            
+                if(moveLegB) {
+                    
+               len -= 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-len,0]);
+           }
+           
+           if(len<0){
+                    
+                      moveLegB=false;
+                      moveLegF=true;
+                      
+               }//end-if-len
+            
+                    
+                     mat4.multiply(product,Newtransm,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+        }//end-System-Failure-Select
+            
+   //-------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE--ΔΕΞΙΑ ΠΑΤΟΥΣΑ----------------------------------------------// 
+   
+      //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΔΕΞΙΑ ΠΑΤΟΥΣΑ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΔΕΞΙΑ ΠΑΤΟΥΣΑ---------------------------------------------//
+         
+      gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+   //--------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ RIGHT-FOOT-------------------------------------------//
+    
+    
+     //-----------------------------------RIGHT LEG--ΔΕΞΙ ΠΟΔΙ--------------------------------------------//
+      scalem=mat4.fromScaling(scalem,[3.9,3,10]);
+      transm=mat4.fromTranslation(transm,[-0.74,-0.5,0.7]);
+      mat4.multiply(product,scalem,transm);
+      
+  //-----------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΤΟΥ ΔΕΞΙΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ) ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ------------------//
+  
+      if(document.getElementById("Right-Leg").checked===true) {
+               
+              //Περιορισμός της γωνίας περιστροφής για το δεξί χέρι του ρομπότ
+               if(localAngle >Math.PI/6){
+          
+          localAngle= Math.PI/6;
+          
+         }
+         else if(localAngle < 0){
+             
+           localAngle = 0;
+         }
+         
+     //Αρχή μετασχηματισμών για την περιστροφή του ποδιού παρόμοια με την πατούσα αλλά με διαφορετικούς πίνακες
+              Newtransm= mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+              mat4.rotate(rotMat,rotMat,localAngle,[1,0,0]);
+             
+              Oldtransm= mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+              footRot= mat4.fromXRotation(footRot,localAngle);
+              
+              
+             //Παρόμοια και εδώ περνάμε στους πίνακες τα γινόμενα 
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,footRot);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(product,Newproduct,product);
+              
+              //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+         
+            
+            }//end-if-right-leg
+            
+         //------------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΔΕΞΙΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ)-------------------//
+         
+      //--------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE- ΔΕΞΙ ΠΟΔΙ-------------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+           
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+               
+        
+             if(moveLegF) {
+                       
+               len += 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-len,0]);
+                
+            
+             if(len > 10) {
+                 
+                    moveLegF=false;
+                    moveLegB=true;  
+                }
+                
+            }//end-if-movelegf
+            
+                if(moveLegB) {
+                    
+               len -= 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-len,0]);
+           }
+           
+           if(len<0){
+                    
+                      moveLegB=false;
+                      moveLegF=true;
+                      
+               }//end-if-len
+            
+                    
+                     mat4.multiply(product,Newtransm,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+        }//end-System-Failure-Select
+            
+  //-------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE--ΔΕΞΙ ΠΟΔΙ----------------------------------------------// 
+  
+     //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΔΕΞΙ ΠΟΔΙ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΔΕΞΙ ΠΟΔΙ---------------------------------------------//
+         
+      gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+    //------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ RIGHT-LEG------------------------------------------------------//
+   
+   
+     //------------------------------------LEFT LEG---ΑΡΙΣΤΕΡΟ ΠΟΔΙ-----------------------------------------//
+       scalem=mat4.fromScaling(scalem,[3.9,3,10]);
+      transm=mat4.fromTranslation(transm,[0.85,-0.5,0.7]);
+      mat4.multiply(product,scalem,transm);
+      
+    //------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΤΟΥ ΑΡΙΣΤΕΡΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ) ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ---------------//
+       
+         if(document.getElementById("Left-Leg").checked===true) {
+               
+                
+             //Περιορισμός της γωνίας περιστροφής για το αριστερό πόδι του ρομπότ
+               if(localAngle > Math.PI/4){
+          
+          localAngle= Math.PI/4;
+         }
+         else if(localAngle < 0 ){
+             
+           localAngle= 0;
+         }
+         
+             //Αρχή μτασχηματισμών για την περιστροφή
+              Newtransm=mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+              mat4.rotate(rotMat,rotMat,localAngle,[1,0,0]);
+             
+              Oldtransm=mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+              
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(product,Newproduct,product);
+          
+               //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+             
+            
+            }//end-if-left-leg
+            
+     //-------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΑΡΙΣΤΕΡΟΥ ΠΟΔΙΟΥ(ΚΑΙ ΠΑΤΟΥΣΑΣ)--------------------//
+          
+     //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE--ΑΡΙΣΤΕΡΟ ΠΟΔΙ------------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+           
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+               
+        
+             if(moveLegF) {
+                       
+               len += 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+                
+            
+             if(len > 10) {
+                 
+                    moveLegF=false;
+                    moveLegB=true;  
+                }
+                
+            }
+            
+                if(moveLegB) {
+                    
+               len -= 0.05; 
+               Newtransm = mat4.fromTranslation(Newtransm,[0,len,0]);
+           }
+           
+           if(len<0){
+                    
+                      moveLegB=false;
+                      moveLegF=true;
+                      
+               }//end-if-len
+            
+                    
+                     mat4.multiply(product,Newtransm,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE--ΑΡΙΣΤΕΡΟ ΠΟΔΙ---------------------------------------------//
+   
+    //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΑΡΙΣΤΕΡΟ ΠΟΔΙ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΑΡΙΣΤΕΡΟ ΠΟΔΙ---------------------------------------------//
+         
+      gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+      
+      
+   //-------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ LEFT-LEG----------------------------------------------------//
+    
+    
+    //-----------------------------------------------BODY---ΣΩΜΑ--------------------------------------------------//
+       scalem=mat4.fromScaling(scalem,[10,4.8,11]);
+      transm=mat4.fromTranslation(transm,[0.02,-0.14,1.59]);
+      mat4.multiply(product,scalem,transm);
+      
+   //---------------------------ΑΝ Η ΕΠΙΛΟΓΗ ΕΙΝΑΙ ΓΥΜΝΑΣΤΙΚΗ--ΣΩΜΑ---------------------------------//
+         
+       if(document.getElementById("Gym").checked===true) {
+                   
+             
+                if(!startHand) {//ΑΝ ΤΟ FLAG ΕΚΚΙΝΗΣΗ ΤΩΝ ΧΕΡΙΩΝ ΕΙΝΑΙ ΨΕΥΔΕΣ ΤΟΤΕ ΚΙΝΕΙΤΑΙ ΤΟ ΣΩΜΑ
+               
+               //Οι πίνακες μετακίνησης θα είναι σε αυτή την περίπτωση αυτοί
+              Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+              Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+               
+           //Αν το flag επίκυψης είναι αληθές τότε το ρομπότ ξεκινάει να σκύβει
+                if(bendDown) {
+                    
+               
+               bendAngle += 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle); 
+               
+     }
+                
+         //Αν η γωνία επίκυψης γίνει πάνω απο πάνω από 90 μοίρες σταματαέι αν σκύβει
+             if(bendAngle > Math.PI/2) { bendDown=false;  }
+                
+              //Και επανέρχεται στην αρχική του θέση
+                if(!bendDown) {
+              
+               bendAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle);
+           }
+              
+                       
+       }//end-if-StartHand
+                   
+                   if(bendAngle<=0){
+                   //Αν η γωνία επίκυψης γίνει μικρότερη του 0,τότε ξανά σηκώνονται τα χέρια
+                    bendDown = true;
+                    startHand = true;
+                      
+                      }
+                      
+               
+                 
+       //Προσθέτουμε τα γινόμενα των πινάκων ανάλογα το flag αν είναι αληθής η ψευδής
+       //και έπειται προστίθενται όλα στο τελικό γινόμενο product
+                mat4.multiply(Newproduct,Newtransm,handsRotF);
+                mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                mat4.multiply(product,Newproduct,product);
+                
+                   //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+                  
+                   
+     }//end-if-gym
+    
+        //----------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ΓΥΜΝΑΣΤΙΚΗ--ΣΩΜΑ---------------------------------------//
+        
+     //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE--ΣΩΜΑ------------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,0,23]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0,-23]);
+        
+             if(startHand) {
+                       
+               handsAngle += 0.5*Math.PI/180.0; 
+               handsRotF = mat4.fromZRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > 2*Math.PI) {
+                 
+                    startHand=false;
+                    stopHand=true;  }
+                
+            }
+            
+                if(stopHand) {
+                    
+               handsAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromZRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      stopHand=false;
+                      startHand=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,handsRotF,Newtransm);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE--ΣΩΜΑ---------------------------------------------//
+   
+    //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΣΩΜΑ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΣΩΜΑ---------------------------------------------//
+        
+      gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+    //---------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ BODY--ΣΩΜΑ---------------------------------------------//
+    
+    
+     //-----------------------------------------LEFT HAND--ΑΡΙΣΤΕΡΟ ΧΕΡΙ --------------------------------------------//
+      scalem=mat4.fromScaling(scalem,[2,3,9]);
+      transm=mat4.fromTranslation(transm,[3.1,-0.25,2.05]);
+      mat4.multiply(product,scalem,transm);
+       
+     //----------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΤΟΥ ΑΡΙΣΤΕΡΟΥ ΧΕΡΙΟΥ ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ-----------------//
+     
+           if(document.getElementById("Left-Hand").checked===true) {
+               
+             //Περιορισμός της γωνίας περιστροφής για το αριστερό χέρι του ρομπότ
+               if(localAngle > Math.PI){
+          
+          localAngle= Math.PI;
+         }
+         else if(localAngle < 0 ){
+             
+           localAngle= 0;
+         }
+         
+             //Αρχή μετασχηματισμών για την περιστροφή
+              Newtransm=mat4.fromTranslation(Newtransm,[0,-0.8,22.8]);
+              mat4.rotate(rotMat,rotMat,localAngle,[1,0,0]);
+             
+              Oldtransm=mat4.fromTranslation(Oldtransm,[0,0.8,-22.8]);
+              
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(product,Newproduct,product);
+              
+               //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+             
+            
+            }//end-if-left-hand
+            
+       //----------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΑΡΙΣΤΕΡΟΥ ΧΕΡΙΟΥ----------------------------//
+       
+                  //------------ΓΙΑ ΤΗΝ ΚΙΝΗΣΗ ΣΤΑ ΧΕΡΙΑ ΧΡΗΣΙΜΟΠΟΙΟΥΝΤΑΙ ΔΥΟ ΠΙΝΑΚΕΣ ΜΕΤΑΤΟΠΙΣΗΣ ΚΑΙ ΔΥΟ ΠΕΡΙΣΤΡΟΦΗΣ.
+           //ΜΟΛΙΣ ΤΑ ΧΕΡΙΑ ΕΠΑΝΕΛΘΟΥΝ ΣΤΗΝ ΘΕΣΗ ΤΟΥΣ ΑΦΟΥ ΟΡΙΖΟΝΤΙΩΘΟΥΝ ΤΑΥΤΟΧΡΟΝΑ ΤΟΤΕ ΚΑΝΟΥΝ ΕΠΙΚΥΨΗ ΜΑΖΙ ΜΕ
+           //ΤΟ ΥΠΟΛΟΙΠΟ ΣΩΜΑ(ΚΕΦΑΛΙ ΚΑΙ ΣΩΜΑ) ΚΑΙ ΕΠΑΝΕΡΧΟΝΤΑΙ ΣΤΗΝ ΘΕΣΗ ΤΟΥΣ ΚΑΙ ΕΠΕΙΤΑ ΞΕΚΙΝΑΕΙ ΠΑΛΙ Η ΚΙΝΗΣΗ 
+           //ΤΩΝ ΧΕΡΙΩ ΜΕΜΟΝΟΜΕΝΑ.Η ΚΙΝΗΣΗ ΕΙΝΑΙ Κ ΑΥΤΗ ANIMATED ΟΣΟ Η ANIMATED ΕΠΙΛΟΓΗ ΕΙΝΑΙ ΕΝΕΡΓΟΠΟΙΗΜΕΝΗ.Η ΛΟΓΙΚΗ Κ ΕΔΩ
+           //ΠΑΡΟΜΟΙΑ ΜΕ ΤΙΣ ΑΛΛΕΣ ΕΠΙΛΟΓΕΣ ΟΡΙΖΩΝΤΑΣ ΚΑΙ ΕΔΩ ΜΕΤΑΒΛΗΤΕΣ FLAG ΑΡΧΗΣ ΚΑΙ ΤΕΛΟΥΣ ΤΗΣ ΚΑΘΕ ΚΙΝΗΣΗΣ-------------//
+           
+     //----------------------------ΑΝ Η ΕΠΙΛΟΓΗ ΕΙΝΑΙ ΓΥΜΝΑΣΤΙΚΗ-ΑΡΙΣΤΕΡΟ ΧΕΡΙ---------------------------------//
+         
+       if(document.getElementById("Gym").checked===true) {
+           
+     
+           
+        
+          if(startHand) {//FLAG ΓΙΑ ΤΟ ΑΝ ΘΑ ΞΕΚΙΝΗΣΟΥΝ ΤΑ ΧΕΡΙΑ
+                  
+              Newtransm = mat4.fromTranslation(Newtransm,[0,-0.8,22.8]);
+              Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.8,-22.8]);
+              
+              
+              if(!moveDown) {//FLAG ΓΙΑ ΤΟ ΑΝ ΤΑ ΧΕΡΙΑ ΠΡΕΠΕΙ ΝΑ ΚΙΝΗΘΟΥΝ ΚΑΤΩ ΔΗΛΑΔΗ ΣΤΗΝ ΑΡΧΙΚΗ ΘΕΣΗ ΤΟΥΣ
+                   
+               handsAngle += 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+           }
+        
+           //Αν η γωνία περιστροφής γίνει πάνω από 90 μοίρες τότε το flag γίνεται αληθές και μειώνεται η γωνία
+             if(handsAngle > Math.PI/2) { moveDown=true;  }
+                
+                
+                if(moveDown) {
+                
+                   handsAngle -= 0.5*Math.PI/180.0;
+                   handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+              }
+            
+      if(handsAngle<0){
+                 //Αν στο τέλος γίνει μικρότερη του 0 τότε ξεκινάει και η επίκυψη όπως βλέπουμε παρακάτω  
+                  moveDown=false;
+                  startHand=false;
+                       
+                }//end-if-handsAngle
+            
+            
+            }//end-startHand
+    
+    else {
+    
+   //-----------------------ΑΡΧΗ ΕΠΙΚΥΨΗΣ ΑΡΙΣΤΕΡΟΥ ΧΕΡΙΟΥ---------------------------------------------------------------------// 
+   //
+       //Οι νέες θέσεις μετατόπισης του ρομπότ με άξονα τα ποδια του δηλαδή
+              Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+              Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+               
+              
+            if(bendDown) {
+                
+              //Παρόμοια με τα χέρια μεγαλώνει η γωνία επίκυψης μέχρι να γίνει 90 μοίρες
+               bendAngle += 0.5*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle);
+           
+               }
+            //Παρόμοια κ εδώ με τα χέρια το σώμα επιστέφει στην θέση του όρθιο δηλαδή
+             if(bendAngle > Math.PI/2) { bendDown=false;  }
+                
+                
+                if(!bendDown) {
+                    
+               bendAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle); 
+           
+     }
+            
+             if(bendAngle<0){
+               
+           bendDown = true; 
+           startHand = true;
+          }
+            
+  }//end-else
+          
+            
+     //---------------------------ΤΕΛΟΣ ΕΠΙΚΥΨΗΣ ΑΡΙΣΤΕΡΟΥ ΧΕΡΙΟΥ------------------------------------------------------------// 
+         
+      //Προσθέτουμε τα γινόμενα των πινάκων ανάλογα το flag αν είναι αληθής ή ψευδής
+      // και έπειται προστίθενται όλα στο τελικό γινόμενο product
+                mat4.multiply(Newproduct,Newtransm,handsRotF);
+                mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                mat4.multiply(product,Newproduct,product);
+                
+                   //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+           
+            
+      }//end-if-gym-SELECT
+
+        //----------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ΓΥΜΝΑΣΤΙΚΗ--ΑΡΙΣΤΕΡΟ ΧΕΡΙ---------------------------------------//
+        
+    //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE--ΑΡΙΣΤΕΡΟ ΧΕΡΙ------------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.8,22.8]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.8,-22.8]);
+        
+             if(startHand) {
+                       
+               handsAngle += 0.5*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > 2*Math.PI) {
+                 
+                    startHand=false;
+                    stopHand=true;  }
+                
+            }
+            
+                if(stopHand) {
+                    
+               handsAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      stopHand=false;
+                      startHand=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE--ΑΡΙΣΤΕΡΟ ΧΕΡΙ---------------------------------------------//
+   //
+   //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΑΡΙΣΤΕΡΟ ΧΕΡΙ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΑΡΙΣΤΕΡΟ ΧΕΡΙ---------------------------------------------//
+        
+        
+       gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+       gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+       
+   //-----------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ LEFT-HAND---------------------------------------------------------//
+    
+    
+   //----------------------------------------RIGHT HAND----ΔΕΞΙ ΧΕΡΙ---------------------------------------------------//
+      scalem=mat4.fromScaling(scalem,[2,3,9]);
+      transm=mat4.fromTranslation(transm,[-2.92,-0.25,2.05]);
+      mat4.multiply(product,scalem,transm);
+      
+       //-------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΤΟΥ ΔΕΞΙΟΥ ΧΕΡΙΟΥ ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ---------------// 
+       
+        if(document.getElementById("Right-Hand").checked===true) {
+               
+                
+            //Περιορισμός της γωνίας περιστροφής για το δεξί χέρι του ρομπότ
+               if(localAngle > Math.PI){
+          
+          localAngle= Math.PI;
+         }
+         else if(localAngle < 0 ){
+             
+           localAngle= 0;
+         }
+         
+             //Αρχή μετασχηματισμών για την περιστροφή
+              Newtransm=mat4.fromTranslation(Newtransm,[0,-0.8,22.8]);
+              mat4.rotate(rotMat,rotMat,localAngle,[1,0,0]);
+             
+              Oldtransm=mat4.fromTranslation(Oldtransm,[0,0.8,-22.8]);
+              
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(product,Newproduct,product);
+              
+             //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+             
+            
+            }//end-if-right-hand
+            
+      //---------------------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΔΕΞΙΟΥ ΧΕΡΙΟΥ-------------------------------//
+          
+          
+     //---------------------------ΑΝ Η ΕΠΙΛΟΓΗ ΕΙΝΑΙ ΓΥΜΝΑΣΤΙΚΗ---ΔΕΞΙ ΧΕΡΙ-------------------------------//
+         
+       if(document.getElementById("Gym").checked===true) {
+                   
+        
+              
+               if(startHand) {
+                       
+                         Newtransm=mat4.fromTranslation(Newtransm,[0,-0.8,22.8]);
+                         Oldtransm=mat4.fromTranslation(Oldtransm,[0,0.8,-22.8]);
+                         
+           if(!moveDown) {
+               
+             
+                   
+               handsAngle += 0.5*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                }
+            
+             if(handsAngle > Math.PI/2) { moveDown=true;  }
+                
+                
+                if(moveDown) {
+                    
+               handsAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      moveDown=false;
+                      startHand=false;
+                      
+               }//end-if-handsAngle
+            
+            }//end-startHand
+          
+          else {
+              
+    //-----------------------------ΑΡΧΗ ΕΠΙΚΥΨΗΣ ΔΕΞΙΟΥ ΧΕΡΙΟΥ---------------------------------------------------------------// 
+       
+             Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+             Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+               
+              
+              
+            if(bendDown) {
+                  
+               bendAngle += 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle);  
+                  }
+            
+             if(bendAngle > Math.PI/2) { bendDown=false;  }
+                
+                
+                if(!bendDown) {
+                    
+               bendAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle); 
+          }
+           
+            
+           if(bendAngle<0){
+                 
+                  startHand=true;
+                  bendDown = true;
+            }
+            
+      }//end-else
+    
+            
+ //--------------------------------ΤΕΛΟΣ ΕΠΙΚΥΨΗΣ ΔΕΞΙΟΥ ΧΕΡΙΟΥ------------------------------------------------------------//               
+    //Προσθέτουμε τα γινόμενα των πινάκων ανάλογα το flag αν είναι αληθής ή ψευδής
+    // και έπειται προστίθενται όλα στο τελικό γινόμενο product
+      
+                mat4.multiply(Newproduct,Newtransm,handsRotF);
+                mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                mat4.multiply(product,Newproduct,product);
+                
+                   //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+    //-----------------------------------------------------------------------------------------------//            
+           
+         }//end-if-gym
+        //----------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ΓΥΜΝΑΣΤΙΚΗ--ΔΕΞΙ ΧΕΡΙ---------------------------------------//
+      
+   //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI SYSTEM FAILURE----ΔΕΞΙ ΧΕΡΙ----------------------------------------//
+   
+       if(document.getElementById("System_Failure").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.8,22.8]);
+              Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.8,-22.8]);
+        
+             if(startHand) {
+                       
+               handsAngle += 0.5*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,-handsAngle);
+                
+            
+             if(handsAngle > 2*Math.PI) {
+                 
+                    startHand=false;
+                    stopHand=true;  
+                }
+                
+            }
+                if(stopHand) {
+                    
+               handsAngle -= 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      stopHand=false;
+                      startHand=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                   //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+              
+        }//end-System-Failure-Select
+      //----------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM FAILURE--ΔΕΞΙ ΧΕΡΙ---------------------------------------------// 
+      
+      //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΔΕΞΙ ΧΕΡΙ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(product,Newproduct,product);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΔΕΞΙ ΧΕΡΙ---------------------------------------------//
+        
+      
+     gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(product));
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+   //----------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ RIGHT-HAND--ΔΕΞΙ ΧΕΡΙ----------------------------------------------------------//
+     
+     
+    //-------------------ΕΡΓΑΣΙΕΣ ΥΦΗΣ ΓΙΑ ΤΗΝ ΥΦΗ ΤΟΥ ΠΡΟΣΩΠΟΥ--------------------------//
+    
+      gl.activeTexture(gl.TEXTURE1);//Ενεργοποίηση δεύτερης διαθέσιμης μονάδας υφής
+	
+	gl.bindTexture(gl.TEXTURE_2D,faceTexture);//Σύνδεση μονάδας με την υφή που θέλουμε(πρώτη πλέον)
+         
+	//Ενημέρωση μεταβλητής δείκτη στο uniform για την μονάδα που ενεργοποιήσαμε(πρώτη)
+	gl.uniform1i(samplerUniformPointer, 1);
+
+	//Δεύσμευση του buffer της υφής	
+	gl.bindBuffer(gl.ARRAY_BUFFER, floorTexturebuffer);
+	
+        //Ενημέρωση attribute για τις συντεταγμένες υφής
+	gl.vertexAttribPointer(textCoordPointer, floorTexturebuffer.itemSize, gl.FLOAT, false, 0, 0);
+           
+    //-----------------------ΤΕΛΟΣ ΕΡΓΑΣΙΩΝ ΓΙΑ ΤΗΝ ΥΦΗ ΤΟΥ ΠΡΟΣΩΠΟΥ------------------------//
+    
+  //-------------------------------------------HEAD-----------------------------------------------------------------------//
+  
+  //Πίνακας που περιέχει το γινόμενο μετασχηματισμού μετακίνησης και περιστροφής του κεφαλιού
+  //-ΔΙΑΦΟΡΕΤΙΚΟ ΟΝΟΜΑ ΑΠΟ ΤΟ ΚΟΙΝΟ ΓΙΝΟΜΕΝΟ PRODUCT ΛΟΓΩ ΤΟΥ ΟΤΙ ΠΕΡΙΕΧΕΙ Κ ΤΗΝ ΑΡΧΙΚΗ ΠΕΡΙΣΤΡΟΦΗ ΓΙΑ ΤΗΝ ΥΦΗ-//
+     var headproduct = mat4.create();
+     
+     var rotatem = mat4.create();//Πίνακας που περιέχει τον πίνακα περιστροφής ΏΣΤΕ ΝΑ ΕΦΑΡΜΟΣΤΕΙ Η ΥΦΗ ΑΚΡΙΒΩΣ 
+     
+      scalem=mat4.fromScaling(scalem,[5.2,3,4]);
+      transm=mat4.fromTranslation(transm,[0.025,-0.58,6.26]);
+      mat4.multiply(product,scalem,transm);
+      
+      rotatem = mat4.fromXRotation(rotatem,-90*Math.PI/180.0);
+      mat4.multiply(headproduct,product,rotatem);
+       
+      //-------------------ΑΝ ΕΠΙΛΕΧΘΕΙ ΠΕΡΙΣΤΡΟΦΗ ΤΟΥ ΚΕΦΑΛΙΟΥ ΤΟΤΕ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ-----------------//
+      
+      if (document.getElementById("Head").checked===true) {
+          
+          //Περιορισμός της γωνίας περιστροφής για το κεφάλι του ρομπότ
+          //-ΘΕΛΟΥΜΕ ΜΕΧΡΙ 90 ΜΟΙΡΕΣ ΓΩΝΙΑ ΑΠΟ ΤΗΝ ΘΕΣΗ 0,0,0
+              //Η 180 ΜΟΙΡΕΣ ΣΥΝΟΛΙΚΑ ΑΡΑ ΑΛΛΑΖΕΙ ΚΑΙ Ο ΠΕΡΙΟΡΙΣΜΟΣ-//
+              
+           if(localAngle > Math.PI/2){
+          
+          localAngle= Math.PI/2;
+         }
+         else if(localAngle < -Math.PI/2 ){
+             
+           localAngle=  -Math.PI/2;
+         }
+         
+             //Αρχή μετασχηματισμών για την περιστροφή του κεφαλιού.Ο άξονας περιστροφής είναι ο άξονας z.
+              Newtransm=mat4.fromTranslation(Newtransm,[0,-1,0]);
+              rotMat= mat4.fromZRotation(rotMat,localAngle);
+             
+              Oldtransm=mat4.fromTranslation(Oldtransm,[0,1,0]);
+              
+              //Προσθέτουμε στον πίνακα Newproduct το γινόμενο μετασχηματισμού και περιστροφής αρχικά,στο οποίο
+              //στη συνέχεια προσθέτουμε τον πίνακα μετακίνησης στην αρχική θέση ο οποίος στο τέλος προστίθεται με την
+              //σειρά του στο τελικό γινόμενο headproduct και περνιέται στο τελικό uniform
+              mat4.multiply(Newproduct,Newtransm,rotMat);
+              mat4.multiply(Newproduct,Newproduct,Oldtransm);
+              mat4.multiply(headproduct,Newproduct,headproduct);
+          
+               //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(headproduct));
+             
+        }//end-if-Head
+       
+        //-----------------------------------ΤΕΛΟΣ ΠΕΡΙΣΤΡΟΦΗΣ ΚΕΦΑΛΙΟΥ----------------------------//
+        
+       //---------------------------ΑΝ Η ΕΠΙΛΟΓΗ ΕΙΝΑΙ ΓΥΜΝΑΣΤΙΚΗ---ΚΕΦΑΛΙ-------------------------------//
+       
+       if(document.getElementById("Gym").checked===true) {
+           
+            //ΠΑΡΟΜΟΙΑ ΓΙΑ ΤΟ ΚΕΦΑΛΙ ΟΠΩΣ ΚΑΙ ΓΙΑ ΤΟ ΣΩΜΑ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ
+                  if(!startHand) {
+                  
+              Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,11.45]);
+              Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,-11.45]);
+               
+            
+               if(bendDown) {
+                   
+               bendAngle += 0.5*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,-bendAngle);
+           }
+        
+     
+            if(bendAngle > Math.PI/2) { bendDown=false;  }
+                
+                
+                if(!bendDown) {
+                    
+                       
+               bendAngle -= 0.5*Math.PI/180.0;
+                handsRotF = mat4.fromXRotation(handsRotF,-bendAngle);
+           }
+         
+            
+           if(bendAngle<0){
+                
+               bendDown = true;
+               
+            }
+            
+        //Ο τελικός πίνακας περιστροφής θα είναι ο παραπάνω για να μην επηρεάζεται απο την κίνηση των χεριών και το κεφάλι
+        //παρά μόνο να κάνει κ αυτό επίκυψη μαζί με το υπόλοιπο σώμα
+           headRot=handsRotF;
+           
+              }//end-if-StartHand
+              
+     
+               
+                 mat4.multiply(Newproduct,Newtransm,headRot);
+                mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                mat4.multiply(headproduct,Newproduct,headproduct);
+                
+                   //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(headproduct));
+              
+           
+        }//end-if-gym
+            
+   //----------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ΓΥΜΝΑΣΤΙΚΗ--ΚΕΦΑΛΙ---------------------------------------// 
+   
+     //---------------------------ΑΝ Η ΕΠΙΛΟΓΗ ΕΙΝΑΙ SYSTEM-FAILURE--ΚΕΦΑΛΙ--------------------------------//
+       
+       if(document.getElementById("System_Failure").checked===true) {
+           
+            //ΠΑΡΟΜΟΙΑ ΓΙΑ ΤΟ ΚΕΦΑΛΙ ΟΠΩΣ ΚΑΙ ΓΙΑ ΤΟ ΣΩΜΑ ΕΧΟΥΜΕ ΤΑ ΑΚΟΛΟΥΘΑ
+                 
+                 if(moveUp) {
+                     
+                 
+                if(hh < 7) {
+                hh+=0.1;
+                Newtransm = mat4.fromTranslation(Newtransm,[0,0,hh]);
+             }
+             
+             if(hh>7) {
+                 
+                    moveDown=true; 
+                    moveUp=false; 
+                }
+         }
+         
+            if(moveDown) 
+            { 
+              hh -= 0.1; 
+             Newtransm = mat4.fromTranslation(Newtransm,[0,0,hh]);
+             
+               if(hh<0){
+                
+                moveUp=true;
+                moveDown=false;
+                
+            } 
+             
+          }
+            //Περνάμε το πίνακα μετασχηματισμού στο τελικό γινόμενο headproduct για το κεφάλι
+            mat4.multiply(headproduct,Newtransm,headproduct);
+             
+                
+                   //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(headproduct));
+              
+           
+        }//end-if-SYSTEM-FAILURE
+            
+   //----------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ SYSTEM-FAILURE--ΚΕΦΑΛΙ---------------------------------------// 
+   
+   //-------------------------AN H  ΕΠΙΛΟΓΗ EINAI ON/OFF--ΚΕΦΑΛΙ------------------------------------------//
+   
+       if(document.getElementById("On-Off").checked===true) {
+                   
+               Newtransm = mat4.fromTranslation(Newtransm,[0,-0.5,0]);
+               Oldtransm = mat4.fromTranslation(Oldtransm,[0,0.5,0]);
+        
+             if(fall) {
+                       
+               handsAngle += 0.1*Math.PI/180.0; 
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+                
+            
+             if(handsAngle > Math.PI/2) {
+                 
+                    fall=false;
+                    getUp=true;  }
+                
+            }
+            
+                if(getUp) {
+                    
+               handsAngle -= 0.1*Math.PI/180.0;
+               handsRotF = mat4.fromXRotation(handsRotF,handsAngle);
+       }
+            
+           if(handsAngle<0){
+                    
+                      getUp=false;
+                      fall=true;
+                      
+               }//end-if-handsAngle
+            
+                     mat4.multiply(Newproduct,Newtransm,handsRotF);
+                     mat4.multiply(Newproduct,Newproduct,Oldtransm);
+                     mat4.multiply(headproduct,Newproduct,headproduct);
+                                 
+                     //Πέρασμα τελικού μετασχηματισμού στο uniform
+              gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(headproduct));
+        }//end-System-Failure-Select
+            
+   //------------------------------ΤΕΛΟΣ ΕΠΙΛΟΓΗΣ ON/OFF--ΚΕΦΑΛΙΟΥ---------------------------------------------//
+        
+      gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(headproduct));
+      gl.drawElements(gl.TRIANGLES,indexbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+      
+    //---------------------------------------ΤΕΛΟΣ ΕΝΟΤΗΤΑΣ HEAD-------------------------------------------------//
+   
+  
+ //---------------------------ΤΕΛΟΣ ΕΡΓΑΣΙΩΝ ΓΙΑ ΤΟΝ ΣΧΕΔΙΑΣΜΟ ΚΑΙ ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥΣ  ΤΟΥ ΡΟΜΠΟΤ-----------------------------------------------------//
+  
+  //-----------------------ΑΡΧΗ ΕΡΓΑΣΙΩΝ ΓΙΑ ΤΟ SKYBOX------------------------------//
+  
+  
+	skybuffer = gl.createBuffer();//Δημιουργία buffer 
+	gl.bindBuffer(gl.ARRAY_BUFFER,skybuffer); //Δέσμευση buffer για να δεχθεί δεδομένα vertex
+        
+	//Οκτώ κορυφές του κύβου
+        var skyVertices = [
+							0.5, 0.5, 0.5, 1.0,
+							-0.5, 0.5, 0.5, 1.0,
+							-0.5, -0.5, 0.5, 1.0,
+							0.5, -0.5, 0.5, 1.0,
+                                                        
+                                                        0.5, 0.5, -0.5, 1.0,
+							-0.5, 0.5, -0.5, 1.0,
+							-0.5, -0.5, -0.5, 1.0,
+							0.5, -0.5, -0.5, 1.0
+							];
+                                                        
+	//Πέρασμα τιμών στο buffer που δεσμεύθηκε
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(skyVertices),	gl.STATIC_DRAW);
+        skybuffer.itemSize = 4; //Αριθμός που εκφράζει ανά πόσες τιμές αφορούν μια κορυφή
+	skybuffer.numberOfItems = 8; //Αριθμός κορυφών συνολικά
+        
+    //---------------------------SKY INDEX------------------------------------------------//
+       skyIbuffer=gl.createBuffer();
+       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,skyIbuffer);
+       
+    	var skyindex = [
+							0,1,2, 
+                                                        0,2,3, 
+                                                        4,5,6,
+                                                        4,6,7,
+                                                        0,4,7,
+                                                        0,7,3,
+                                                        0,1,5,
+                                                        0,5,4,
+                                                        1,5,6,
+                                                        1,6,2,
+                                                        7,6,2,
+                                                        7,2,3
+                                                        
+                                                        ];
+                                                        
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(skyindex),gl.STATIC_DRAW);   
+	skyIbuffer.itemSize=1; 
+	skyIbuffer.numberOfItems =36; 
+        
+      //----------------------------------------------------------------------------------//
+        gl.bindBuffer(gl.ARRAY_BUFFER,skybuffer);
+	gl.vertexAttribPointer(vertexPositionAttributePointer, skybuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,skyIbuffer);
+      //----------------------------------------------------------------------------------//
+      
+      //---------------------------------ΕΡΓΑΣΙΕΣ ΥΦΗΣ SKYBOX-----------------------------------//
+      
+         gl.activeTexture(gl.TEXTURE2);//Ενεργοποίηση τρίτης διαθέσιμης μονάδας υφής
+	
+	gl.bindTexture(gl.TEXTURE_2D,skyTexture);//Σύνδεση μονάδας με την υφή που θέλουμε(δεύτερη πλέον)
+         
+	//Ενημέρωση μεταβλητής δείκτη στο uniform για την μονάδα που ενεργοποιήσαμε(δεύτερη)
+	gl.uniform1i(samplerUniformPointer, 2);
+
+	//Δεύσμευση του buffer της υφής	
+	gl.bindBuffer(gl.ARRAY_BUFFER, texturebuffer);
+	
+        //Ενημέρωση attribute για τις συντεταγμένες υφής
+	gl.vertexAttribPointer(textCoordPointer, texturebuffer.itemSize, gl.FLOAT, false, 0, 0); 
+    //------------------------------------------------------------------------------------------//
+        
+     //----------------------ΔΕΥΤΕΡΕΣ ΕΡΓΑΣΙΕΣ SKYBOX-----------------------//
+           var skytemp = mat4.create();
+                
+                var sX=5000;
+                var sY=5000;
+                var sZ=5000;
+                
+		mat4.fromScaling(skytemp,[sX,sY,sZ]);
+		gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(skytemp)); 
+		gl.drawElements(gl.TRIANGLES,skyIbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+     
+   //-----------------------ΤΕΛΟΣ ΟΛΩΝ ΤΩΝ ΕΡΓΑΣΙΩΝ ΓΙΑ ΤΟ SKYBOX----------------------------------------//
+   //
+      //-----------------------ΑΡΧΗ ΕΡΓΑΣΙΩΝ ΓΙΑ ΤΟ ΠΑΤΩΜΑ--------------------------------------//
+      
+        floorbuffer=gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,floorbuffer);
+        
+        	var floorVertices = [
+							1.0, 1.0, -0.2, 1.0,
+							-1.0, 1.0, -0.2, 1.0,
+							-1.0, -1.0, -0.2, 1.0,
+							1.0, -1.0, -0.2, 1.0
+							];
+	
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floorVertices),	gl.STATIC_DRAW);
+	floorbuffer.itemSize = 4; 
+	floorbuffer.numberOfItems = 4;
+        
+      //------------------------------FLOOR INDEX-------------------------------------//
+        floorIbuffer = gl.createBuffer(); 
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,floorIbuffer); 
+	var floorIndex = [
+							0,1,2,
+							0,2,3
+						];
+	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(floorIndex),gl.STATIC_DRAW);   
+	floorIbuffer.itemSize=1; 
+	floorIbuffer.numberOfItems = 6;  
+      //-------------------------------------------------------------------------------//    
+        gl.bindBuffer(gl.ARRAY_BUFFER,floorbuffer);
+	gl.vertexAttribPointer(vertexPositionAttributePointer, floorbuffer.itemSize, gl.FLOAT, false, 0, 0);
+        
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,floorIbuffer);
+      //----------------------------------------------------------------------------------//
+      
+       //---------------------------ΕΡΓΑΣΙΕΣ ΥΦΗΣ ΠΑΤΩΜΑΤΟΣ----------------------------//
+       
+         gl.activeTexture(gl.TEXTURE3);//Ενεργοποίηση τέταρτης διαθέσιμης μονάδας υφής
+	
+	gl.bindTexture(gl.TEXTURE_2D,floorTexture);//Σύνδεση μονάδας με την υφή που θέλουμε(τρίτη πλέον)
+         
+	//Ενημέρωση μεταβλητής δείκτη στο uniform για την μονάδα που ενεργοποιήσαμε(τρίτη)
+	gl.uniform1i(samplerUniformPointer, 3);
+
+	//Δεύσμευση του buffer της υφής	
+	gl.bindBuffer(gl.ARRAY_BUFFER, floorTexturebuffer);
+	
+        //Ενημέρωση attribute για τις συντεταγμένες υφής
+	gl.vertexAttribPointer(textCoordPointer, floorTexturebuffer.itemSize, gl.FLOAT, false, 0, 0); 
+        //---------------------------------------------------------------------------------------//
+        
+          //-------------------ΔΕΥΤΕΡΕΣ ΕΡΓΑΣΙΕΣ ΠΑΤΩΜΑΤΟΣ-----------------------//
+           var floortemp = mat4.create();
+                
+                var sX=12.5;
+                var sY=12.5;
+  //Με κλιμάκωση των διαστάσεων του μετασχηματίζονται σε 25x25 με ελάχιστη κλιμάκωση κατά άξονα z
+  //Αυξάνουμε τις μεταβλητές της συνάρτησης polygonOffset ώστε κατά την απομάκρυνση της κάμερας σε βάθος
+  //από την αρνητική φορά του άξονα z,προς τα κάτω δηλαδή,να μην παραμορφώνεται η σκηνή(φαίνονται οι πατούσες από μακριά).
+  
+                mat4.fromScaling(floortemp,[sX,sY,1]);
+		gl.uniformMatrix4fv(transformUniformPointer, false, new Float32Array(floortemp)); 
+                gl.polygonOffset(-3,-3);
+                gl.enable(gl.POLYGON_OFFSET_FILL);
+		gl.drawElements(gl.TRIANGLES,floorIbuffer.numberOfItems,gl.UNSIGNED_SHORT, 0);
+                gl.disable(gl.POLYGON_OFFSET_FILL);
+      //-------------------------------------------------------------------------------------------//
+        
+ 
+ 
+  //-----------------------ΤΕΛΟΣ ΟΛΩΝ ΤΩΝ ΕΡΓΑΣΙΩΝ ΓΙΑ ΤΟ ΠΑΤΩΜΑ----------------------------------------//
+   }//-------------------------END REDRAW
+
+function startup() {
+    
+    //Συνάρτηση εκίνησης για τον ορισμό διαστάσεων του παραθύρου και ενημέρωση των διαστάσεων του canvas στοιχείου
+	canvas = document.getElementById("myGLCanvas"); 
+	var minDimension=Math.min(window.innerWidth,window.innerHeight); 
+	canvas.width=0.9*minDimension; 
+	canvas.height=0.9*minDimension; 
+	gl = WebGLDebugUtils.makeDebugContext(createGLContext(canvas)); 
+	setupShaders(); //Καλούνται οι συναρτήσεις για αρχικοποίηση shaders και buffers
+	setupBuffers(); 
+        
+	gl.clearColor(0.0, 0.0, 0.0, 1.0); //Ορίζουμε το χρώμα του φόντου ως ΛΕΥΚΟ πλέον
+	gl.enable(gl.DEPTH_TEST);//Ενεργοποίηση ελέγχου βάθους
+        
+        
+        //Σε κάθε γεγονός εντός του καμβά όπως κίνηση κάτω,πάνω ή αριστερά δεξιά καλείται η αντίστοιχη συνάρτηση
+        //για χειρισμό γεγονότων.Κρατάμε και την κίνηση εκτός καμβά για μην κινείται η κάμερα με εκτός καμβά κινήσεις
+	canvas.onmousedown = handleMouseDown;
+        canvas.onmouseup =   handleMouseUp;
+	window.onmouseup =   handleMouseUp;
+	canvas.onmousemove = handleMouseMove;
+	canvas.onwheel =     handleMouseWheel;//Η ΝΕΑ ΣΥΝΑΡΤΗΣΗ ΠΟΥ ΚΑΛΕΙΤΑΙ ΜΕ ΤΗΝ ΚΙΝΗΣΗ ΤΗΣ ΡΟΔΕΛΑΣ ΤΟΥ ΠΟΝΤΙΚΙΟΥ
+       
+        //Το ορθογώνιο που περιέχει τον καμβά,θα χρειαστεί για υπολογισμό της απόστασης σε pixels
+       rect = canvas.getBoundingClientRect();
+       gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight); //Ορισμός πεδίου παράστασης
+     anim(); //Κλήση συνάρτησης για αρχική σχεδίαση
+        
+}//end-startup
+
+//-------------ΑΡΧΗ ΣΥΝΑΡΤΗΣΕΩΝ ΓΙΑ ΤΟΝ ΧΕΙΡΙΣΜΟ ΓΕΓΟΝΟΤΩΝ ΣΤΟΝ ΚΑΜΒΑ--------------//
+
+//Όταν είναι πατημένο το κουμπί του ποντικιού στον καμβά αποθηκεύεται η τελευταία θέση του ποντικιού
+//στους άξονες x,y αντίστοιχα και επαναρχικοποιούνται τα deltaX και Y αντίστοιχα
+function handleMouseDown(event) {
+		mouseDown = true;
+		lastMouseX = event.clientX - rect.left;
+		lastMouseY = rect.bottom - event.clientY;
+		deltaMouseX = 0;
+		deltaMouseY = 0;
+		deltaFresh = true; 
+                
+             
+}
+
+//Οταν απελευθερωθεί το κουμπί του ποντικιού θέτουμε και το flag ως ψευδές
+function handleMouseUp(event) {
+    mouseDown = false;
+   
+}
+
+//'Οταν κινείται το ποντίκι στον καμβά αποθηκεύουμε την τρέχουσα του ποντικιού.
+//Αν το κουμπί είναι πατημένο, υπολογισμός της μετακίνησης του ποντικιού (Δx, Δy)
+//  που χρησιμοποιείται για τη νέα θέση της κάμερας στη redraw.
+//Τέλος, αποθηκεύεται η τρέχουσα θέση ως "προηγούμενη" για να υπολογιστεί η διαφορά στην επόμενη	
+function handleMouseMove(event) {
+    
+		currMouseX = event.clientX - rect.left;
+		currMouseY = rect.bottom - event.clientY;
+		
+
+		if (mouseDown)
+		{
+			deltaMouseX = currMouseX - lastMouseX;
+			deltaMouseY = currMouseY - lastMouseY;
+			deltaFresh = true;
+		}
+
+//ΘΕΛΟΥΜΕ ΟΜΩΣ ΟΙ ΚΙΝΗΣΕΙΣ ΤΟΥ ΠΟΝΤΙΚΙΟΥ ΣΤΟΝ ΚΑΜΒΑ ΝΑ ΜΕΤΡΙΟΥΝΤΑΙ ΚΑΙ ΟΤΑΝ ΤΟ ΑΝΙΜΑΤΙΟΝ ΕΙΝΑΙ ΣΤΑΜΑΤΗΜΕΝΟ
+//ΩΣΤΕ ΝΑ ΜΕΤΑΚΙΝΕΙΤΑΙ Η ΘΕΣΗ ΤΗΣ ΚΑΜΕΡΑΣ ΚΑΙ ΠΑΛΙ.ΧΡΗΣΙΜΟΠΟΙΟΥΜΕ ΤΙΣ ΠΑΡΑΚΑΤΩ ΕΝΤΟΛΕΣ ΣΥΝΘΗΚΗΣ
+//ΚΑΙ ΕΠΑΝΑΣΧΕΔΙΑΖΟΥΜΕ ΤΗΝ ΣΚΗΝΗ ΚΑΘΕ ΦΟΡΑ
+	          if(!requestId){
+                       if(mouseDown)
+                                  {
+                          
+                       deltaMouseX = currMouseX - lastMouseX;
+			deltaMouseY = currMouseY - lastMouseY;
+                        deltaFresh = true;
+                        redraw();
+                        
+                      
+                     
+		}//end-mouseDown
+                     
+                     }
+               
+		//ΑΠΟΘΗΚΕΥΣΗ ΠΡΟΗΓΟΥΜΕΝΗΣ ΘΕΣΗΣ ΩΣ ΤΗΝ ΤΡΕΧΟΥΣΑ
+		lastMouseX = currMouseX;
+		lastMouseY = currMouseY;
+                
+        
+                
+              }
+
+
+function handleMouseWheel(event) {
+    
+    //ΣΕ ΚΑΘΕ ΚΙΝΗΣΗ ΤΗΣ ΡΟΔΕΛΑΣ Η ΓΩΝΙΑ ΠΕΡΙΣΤΡΟΦΗΣ ΑΥΞΑΝΕΤΑΙ ΚΑΤΑ ΔΥΟ AKTINIA ΚΑΙ ΧΡΗΣΙΜΟΠΟΙΕΤΑΙ ΚΑΘΟΛΙΚΑ
+    // ΣΕ ΟΛΕΣ ΤΙΣ ΕΠΙΛΟΓΕΣ ΠΕΡΙΣΤΡΟΦΗΣ ΤΩΝ ΜΕΛΩΝ ΤΟΥ ΣΩΜΑΤΟΣ ΤΟΥ ΡΟΜΠΟΤ
+    
+               if (event.deltaY > 0) 
+                   localAngle+= 3.0*Math.PI/180.0;
+               
+                    
+                else 
+                 localAngle-= 3.0*Math.PI/180.0; 
+                  
+               
+               
+        //ΑΝ ΤΟ ΑΝΙΜΑΤΙΟΝ ΕΙΝΑΙ ΣΤΑΜΑΤΗΜΕΝΟ ΕΠΑΝΑΣΧΕΔΙΑΖΟΥΜΕ ΤΗΝ ΣΚΗΝΗ ΩΣΤΕ ΝΑ ΕΧΕΙ ΚΑΙ ΕΤΣΙ ΕΠΙΔΡΑΣΗ Η ΚΙΝΗΣΗ ΤΗΣ ΡΟΔΕΛΑΣ
+            if(!requestId){ 
+              
+                redraw();  
+    }
+            
+            
+      }//end-func
+
+//-------------------ΤΕΛΟΣ ΣΥΝΑΡΤΗΣΕΩΝ ΓΙΑ ΧΕΙΡΙΣΜΟ ΓΕΓΟΝΟΤΩΝ ΤΟΥ ΚΑΜΒΑ-----------------------------//
+
+//----ΟΙ ΣΥΝΑΡΤΗΣΕΙΣ ΓΙΑ ΕΚΚΙΝΗΣΗ ΚΑΙ ΠΑΥΣΗ ΤΟΥ ΑΝΙΜΑΤΙΟΝ------//
+function start() {
+	if (!requestId)
+		anim();
+}
+
+function anim() {
+	requestId = window.requestAnimationFrame(anim);
+	redraw();
+     
+}
+
+function stop() {
+	window.cancelAnimationFrame(requestId);
+	requestId = 0;
+}
+</script>
+
+</head>
+
+<body onload="startup()">
+<canvas id="myGLCanvas" >
+</canvas>
+    
+   <!--ΟΙ ΕΠΙΛΟΓΕΣ ΠΟΥ ΜΠΟΡΕΙ ΝΑ ΕΙΣΑΓΕΙ Ο ΧΡΗΣΤΗΣ--> 
+  <p>CameraView(in Degree):&nbsp;<input type="text" id="cameraView" value="90">&nbsp;
+    
+    <!--ΑΡΧΙΚΗ ΤΙΜΗ ΤΟΥ ΠΕΔΙΟΥ CameraDistance σε 27 για να είναι μεγαλύτερη από το πάτωμα(25x25)-->
+    CameraDistance:&nbsp;<input type="text" id="cameraDistance" value="20"></p>
+
+<p><!--RADIO BUTTONS ΓΙΑ ΤΗΝ ΠΕΡΙΣΤΡΟΦΗ ΤΩΝ ΜΕΛΩΝ ΤΟΥ ΣΩΜΑΤΟΣ ΤΟΥ ΡΟΜΠΟΤ-->
+<input type="radio" name="rotation" id="Head">Κεφάλι&nbsp;
+<input type="radio" name="rotation" id="Left-Hand">Αριστερό χέρι&nbsp;
+<input type="radio" name="rotation" id="Right-Hand">Δεξί Χέρι&nbsp;
+<input type="radio" name="rotation" id="Left-Leg">Αριστερό Πόδι&nbsp;
+<input type="radio" name="rotation" id="Right-Leg">Δεξί Πόδι&nbsp;<br>
+
+<!--RADIO BUTTONS ΓΙΑ ΤΗΝ ANIMATED ΕΠΙΛΟΓΗ ΚΙΝΗΣΗΣ ΤΟΥ ΡΟΜΠΟΤ-->
+<input type="radio" name="rotation" id="Gym">Γυμναστική&nbsp;
+<input type="radio" name="rotation" id="On-Off">On/Off&nbsp;
+<input type="radio" name="rotation" id="System_Failure">System Failure
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+    
+<!--BUTTONS ΓΙΑ ΤΗΝ ΕΚΚΙΝΗΣΗ ΚΑΙ ΠΑΥΣΗ ΤΟΥ ΑΝΙΜΑΤΙΟΝ-->
+<button onClick=start()>Start</button>&nbsp;
+<button onClick=stop()>Stop</button>
+</p>
+</body>
+</html> <!---------TEΛΟΣ ΣΕΛΙΔΑΣ-------------------------->
