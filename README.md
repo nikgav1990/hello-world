@@ -23,7 +23,7 @@ You can stil set the CameraView and CameraDistance and also do the following :
 
 
 ### Usage
-1. You can run the project using an IDE or just by clicking on a version and the browser opens. Its recommended to use Firefox because it's compatibility with the WebGL library.
+1. You can run the project using an IDE or just by clicking on a version(.hmtl file) and the browser opens. Its recommended to use Firefox because it's compatibility with the WebGL library.
 2. You can use whatever version of the project independently of the row.
 Check the Description above for more information for the options in each version.
 
